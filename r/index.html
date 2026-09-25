@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="format-detection" content="telephone=no">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src https://bdraifngipvoefayvuds.supabase.co; img-src 'none'; base-uri 'none'; form-action 'none'">
+<title>답글 쓰기</title>
+<!--
+  답글 폼 (정적 페이지). 데이터는 Supabase 함수 r 이 JSON 으로 준다.
+  원본: perfect 레포 web/r/index.html — 고치면 wint4224-wq.github.io 레포에도 같은 파일을 올린다.
+
+  원칙
+   1) 답글은 사람이 쓴다. 자동 작성·문구 제안 UI 를 두지 않는다. 게시도 사람이 Threads 앱에서 한다.
+   2) 화면은 textContent/createElement 로만 그린다 (HTML 문자열 삽입 금지 → XSS 구조적 차단).
+   3) 모바일 우선. 목표는 글 하나당 탭 2번.
+-->
+<style>
+:root{
+  --bg:#ffffff; --fg:#15171a; --muted:#6b7280; --line:#e5e7eb;
+  --card:#ffffff; --accent:#1d4ed8; --accent-fg:#ffffff;
+  --chip-bg:#eef2ff; --chip-fg:#3730a3; --quote:#f9fafb;
+  --ok:#047857; --ok-bg:#ecfdf5; --warn:#b45309; --warn-bg:#fffbeb;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1115; --fg:#e8eaed; --muted:#9aa3af; --line:#272b33;
+    --card:#161a20; --accent:#5b8cff; --accent-fg:#0b1020;
+    --chip-bg:#1e2536; --chip-fg:#a5b8ff; --quote:#1b1f27;
+    --ok:#34d399; --ok-bg:#0f2a22; --warn:#fbbf24; --warn-bg:#2a2210;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1115; --fg:#e8eaed; --muted:#9aa3af; --line:#272b33;
+  --card:#161a20; --accent:#5b8cff; --accent-fg:#0b1020;
+  --chip-bg:#1e2536; --chip-fg:#a5b8ff; --quote:#1b1f27;
+  --ok:#34d399; --ok-bg:#0f2a22; --warn:#fbbf24; --warn-bg:#2a2210;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--fg);
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",
+       "Malgun Gothic",system-ui,sans-serif;
+  padding:0 16px 120px;
+  -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:640px;margin:0 auto}
+header{
+  position:sticky;top:0;z-index:5;background:var(--bg);
+  padding:14px 0 10px;border-bottom:1px solid var(--line);margin-bottom:16px
+}
+h1{font-size:17px;margin:0;font-weight:650}
+.sub{color:var(--muted);font-size:13px;margin-top:3px}
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:16px;margin-bottom:16px
+}
+.card.done{border-color:var(--ok)}
+.meta{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px}
+.author{font-weight:650;font-size:15px;word-break:break-all}
+.when{color:var(--muted);font-size:13px;white-space:nowrap}
+blockquote{
+  margin:0 0 10px;padding:12px;background:var(--quote);
+  border-radius:10px;white-space:pre-wrap;word-break:break-word;font-size:15px
+}
+.why{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:12px}
+.chip{background:var(--chip-bg);color:var(--chip-fg);border-radius:999px;padding:2px 9px;font-size:12px}
+.score{color:var(--muted);font-size:12px;margin-left:auto}
+.src{display:inline-block;color:var(--accent);font-size:13px;text-decoration:none;margin-bottom:12px}
+textarea{
+  width:100%;min-height:96px;padding:12px;border:1px solid var(--line);
+  border-radius:10px;background:var(--bg);color:var(--fg);
+  font:inherit;font-size:16px;resize:vertical
+}
+textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+.row{display:flex;gap:8px;align-items:center;margin-top:10px}
+.count{color:var(--muted);font-size:12px;min-width:52px}
+button{
+  font:inherit;font-size:15px;border-radius:10px;padding:11px 14px;
+  border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer
+}
+button:disabled{opacity:.55;cursor:default}
+.primary{background:var(--accent);color:var(--accent-fg);border-color:transparent;font-weight:600}
+.grow{flex:1}
+.status{font-size:13px;color:var(--ok);background:var(--ok-bg);
+  border-radius:8px;padding:6px 10px;margin-top:10px;display:none}
+.status.warn{color:var(--warn);background:var(--warn-bg)}
+.status.show{display:block}
+.submitbar{
+  position:fixed;left:0;right:0;bottom:0;padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  background:var(--bg);border-top:1px solid var(--line)
+}
+.submitbar .inner{max-width:640px;margin:0 auto}
+.submitbar button{width:100%;padding:15px}
+.empty{text-align:center;color:var(--muted);padding:48px 0}
+.note{color:var(--muted);font-size:13px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <header><h1>불러오는 중…</h1></header>
+  <noscript><div class="card"><p>이 페이지는 JavaScript 가 필요합니다.</p></div></noscript>
+</div>
+<script>
+(function(){
+  'use strict';
+
+  var API = 'https://bdraifngipvoefayvuds.supabase.co/functions/v1/r';
+  var MAX = 500;
+
+  var MESSAGES = {
+    bad_token: ['링크가 올바르지 않습니다', '주소를 다시 확인해 주세요.'],
+    bad_request: ['요청이 올바르지 않습니다', '페이지를 새로고침해 주세요.'],
+    not_found: ['링크를 찾을 수 없습니다', '주소가 잘못되었거나 이미 삭제된 배치입니다.'],
+    revoked: ['만료된 링크입니다', '이 배치는 종료되었습니다. 다음 알림을 기다려 주세요.'],
+    expired: ['시간이 지났습니다', '이 배치의 유효 시간이 끝났습니다. 다음 알림을 기다려 주세요.'],
+    too_many_opens: ['열람 횟수 초과', '이 링크는 너무 많이 열렸습니다. 보안을 위해 차단되었습니다.'],
+    already_submitted: ['이미 제출했습니다', '이 배치는 제출이 완료되었습니다.'],
+    server_error: ['일시적인 오류', '잠시 후 다시 시도해 주세요.'],
+    network: ['연결하지 못했습니다', '인터넷 연결을 확인하고 새로고침해 주세요.']
+  };
+
+  var app = document.getElementById('app');
+  var token = readToken();
+  var LS = 'draft:' + token;
+  var items = [];        // [{id, card, ta, status, statusEl}]
+  var closed = true;     // 제출 완료·오류 화면에서는 자동저장을 멈춘다
+  var timer = null;
+
+  // ───────────── 작은 도구 ─────────────
+
+  function readToken(){
+    var t = new URLSearchParams(location.search).get('t');
+    if (!t && location.hash) t = new URLSearchParams(location.hash.slice(1)).get('t');
+    return (t && /^[A-Za-z0-9_-]{22}$/.test(t)) ? t : '';
+  }
+
+  function el(tag, cls, text){
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+
+  function clear(node){ while (node.firstChild) node.removeChild(node.firstChild); }
+
+  // 원문 링크는 https 만 허용한다 (javascript: 등 차단).
+  function safeUrl(u){
+    try {
+      var x = new URL(String(u));
+      return x.protocol === 'https:' ? x.href : '';
+    } catch(e){ return ''; }
+  }
+
+  function relTime(iso){
+    var t = new Date(iso).getTime();
+    if (!isFinite(t)) return '';
+    var min = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (min < 1) return '방금';
+    if (min < 60) return min + '분 전';
+    var h = Math.round(min / 60);
+    if (h < 24) return h + '시간 전';
+    return Math.round(h / 24) + '일 전';
+  }
+
+  function leftText(exp){
+    var left = Math.max(0, Math.round((exp - Date.now()) / 60000));
+    if (left <= 0) return '만료됨';
+    if (left < 60) return '남은 시간 ' + left + '분';
+    return '남은 시간 ' + Math.floor(left / 60) + '시간 ' + (left % 60) + '분';
+  }
+
+  function showMessage(title, detail){
+    closed = true;
+    clear(app);
+    var hd = el('header');
+    hd.appendChild(el('h1', '', title));
+    app.appendChild(hd);
+    if (detail) {
+      var c = el('div', 'card');
+      c.appendChild(el('p', '', detail));
+      app.appendChild(c);
+    }
+  }
+
+  function showError(code){
+    var m = MESSAGES[code] || ['요청을 처리할 수 없습니다', '알 수 없는 상태: ' + (code || 'unknown')];
+    showMessage(m[0], m[1]);
+  }
+
+  function api(method, query, body){
+    var opt = { method: method, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' };
+    if (body !== undefined) {
+      // text/plain = CORS 단순 요청 → preflight 없이 바로 간다.
+      opt.headers = { 'Content-Type': 'text/plain;charset=UTF-8' };
+      opt.body = body;
+    }
+    return fetch(API + '?t=' + encodeURIComponent(token) + (query || ''), opt)
+      .then(function(res){
+        return res.json().catch(function(){ return { ok: false, code: 'server_error' }; });
+      });
+  }
+
+  // ───────────── 초안 저장 ─────────────
+  // Threads 앱으로 떠나면 이 페이지는 백그라운드로 밀리고 종료될 수 있다.
+  // 자동저장은 부가 기능이 아니라 동작의 전제 조건이다.
+
+  function snapshot(){
+    var out = {};
+    items.forEach(function(it){ if (it.ta.value.trim()) out[it.id] = it.ta.value; });
+    return out;
+  }
+
+  function saveLocal(){
+    // 로딩 중·오류·제출 완료 화면에서 빈 스냅샷으로 기존 초안을 덮어쓰지 않게.
+    if (closed || !items.length) return;
+    try { localStorage.setItem(LS, JSON.stringify(snapshot())); } catch(e){}
+  }
+
+  function payload(final){
+    return JSON.stringify({
+      t: token,
+      final: !!final,
+      drafts: items.map(function(it){
+        return { candidate_id: it.id, body: it.ta.value, status: it.status };
+      })
+    });
+  }
+
+  // keepalive / sendBeacon 으로 페이지가 사라져도 요청이 살아남게 한다.
+  function saveRemote(useBeacon){
+    if (closed || !items.length) return;
+    var url = API + '?t=' + encodeURIComponent(token) + '&autosave=1';
+    var body = payload(false);
+    try {
+      if (useBeacon && navigator.sendBeacon &&
+          navigator.sendBeacon(url, new Blob([body], { type: 'text/plain;charset=UTF-8' }))) return;
+      fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: body,
+        keepalive: true, credentials: 'omit', referrerPolicy: 'no-referrer'
+      }).catch(function(){});
+    } catch(e){}
+  }
+
+  // ───────────── 복사 ─────────────
+  // 클립보드는 사용자 제스처(탭) 핸들러 안에서 동기적으로 호출해야 한다.
+  // iOS Safari 는 await 뒤의 writeText() 를 조용히 무시한다. 그래서 복사가 맨 먼저다.
+
+  function copyNow(text){
+    var ok = false;
+    try {
+      var tmp = document.createElement('textarea');
+      tmp.value = text;
+      tmp.setAttribute('readonly', '');
+      tmp.style.position = 'fixed'; tmp.style.top = '0'; tmp.style.left = '0'; tmp.style.opacity = '0';
+      document.body.appendChild(tmp);
+      tmp.select(); tmp.setSelectionRange(0, text.length);
+      ok = document.execCommand('copy');
+      document.body.removeChild(tmp);
+    } catch(e){}
+    if (!ok) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(function(){});
+          ok = true;
+        }
+      } catch(e){}
+    }
+    return ok;
+  }
+
+  function onCopy(it, url){
+    var text = it.ta.value.trim();
+    if (!text) { it.ta.focus(); return; }
+
+    // (1) 복사 — 반드시 먼저, 동기적으로.
+    var copied = copyNow(text);
+
+    // (2) 낙관적 상태 기록 — 돌아와서 따로 완료 체크를 하지 않아도 되게.
+    it.status = 'copied';
+    it.card.classList.add('done');
+    it.statusEl.textContent = copied
+      ? '✓ 복사됨 — Threads 앱에서 붙여넣어 게시하세요'
+      : '⚠ 복사 실패 — 답글을 길게 눌러 직접 복사하세요';
+    it.statusEl.className = 'status show' + (copied ? '' : ' warn');
+    saveLocal();
+    saveRemote(false);
+
+    // (3) 이동. 유니버설 링크라 앱이 있으면 앱으로, 없으면 웹으로 열린다.
+    if (copied && url) window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  // ───────────── 화면 ─────────────
+
+  function renderCard(c, saved, readonly){
+    var id = String(c.id);
+    var done = c.existing_status === 'copied' || c.existing_status === 'done';
+    var card = el('div', 'card' + (done ? ' done' : ''));
+
+    var meta = el('div', 'meta');
+    meta.appendChild(el('span', 'author', '@' + (c.author || '')));
+    meta.appendChild(el('span', 'when', relTime(c.posted_at)));
+    card.appendChild(meta);
+
+    card.appendChild(el('blockquote', '', c.text || ''));
+
+    var why = el('div', 'why');
+    (Array.isArray(c.matched) ? c.matched : []).forEach(function(m){ why.appendChild(el('span', 'chip', m)); });
+    why.appendChild(el('span', 'score', '점수 ' + Number(c.score || 0).toFixed(2)));
+    card.appendChild(why);
+
+    var url = safeUrl(c.permalink);
+    if (url) {
+      var a = el('a', 'src', '원문 보기 ↗');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      card.appendChild(a);
+    }
+
+    var ta = el('textarea');
+    ta.maxLength = MAX;
+    ta.setAttribute('maxlength', String(MAX));
+    ta.placeholder = '답글을 직접 입력하세요';
+    ta.setAttribute('enterkeyhint', 'enter');
+    ta.setAttribute('autocapitalize', 'sentences');
+    ta.value = c.existing_body || saved[id] || '';
+    if (readonly) ta.readOnly = true;
+    card.appendChild(ta);
+
+    var row = el('div', 'row');
+    var count = el('span', 'count', ta.value.length + '/' + MAX);
+    var btn = el('button', 'primary grow', '복사하고 원문 열기');
+    btn.type = 'button';
+    row.appendChild(count);
+    row.appendChild(btn);
+    card.appendChild(row);
+
+    var statusEl = el('div', 'status' + (done ? ' show' : ''), done ? '✓ 복사해서 게시함' : '');
+    card.appendChild(statusEl);
+
+    var it = { id: id, card: card, ta: ta, status: done ? c.existing_status : 'draft', statusEl: statusEl };
+
+    ta.addEventListener('input', function(){
+      count.textContent = ta.value.length + '/' + MAX;
+      saveLocal();
+      clearTimeout(timer);
+      timer = setTimeout(function(){ saveRemote(false); }, 1500);
+    });
+    btn.addEventListener('click', function(ev){ ev.preventDefault(); onCopy(it, url); });
+
+    items.push(it);
+    return card;
+  }
+
+  function render(d){
+    clear(app);
+    items = [];
+    var cands = Array.isArray(d.candidates) ? d.candidates : [];
+    var readonly = d.already_submitted === true;
+
+    var hd = el('header');
+    hd.appendChild(el('h1', '', (d.profile_label || '답글') + ' · ' + cands.length + '건'));
+    var sub = el('div', 'sub');
+    hd.appendChild(sub);
+    app.appendChild(hd);
+
+    var exp = new Date(d.expires_at).getTime();
+    if (isFinite(exp)) {
+      var tick = function(){ sub.textContent = leftText(exp); };
+      tick(); setInterval(tick, 30000);
+    }
+
+    if (readonly) {
+      var n = el('div', 'card');
+      n.appendChild(el('b', '', '이미 제출된 배치입니다.'));
+      n.appendChild(el('div', 'note', '내용은 볼 수 있지만 다시 제출할 수 없습니다.'));
+      app.appendChild(n);
+    }
+
+    // 로컬 초안 복원 (네트워크 저장이 실패했을 때의 마지막 방어선)
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem(LS) || '{}') || {}; } catch(e){}
+
+    if (!cands.length) app.appendChild(el('div', 'empty', '후보가 없습니다.'));
+    cands.forEach(function(c){ app.appendChild(renderCard(c, saved, readonly)); });
+
+    var bar = el('div', 'submitbar');
+    var inner = el('div', 'inner');
+    var submit = el('button', 'primary', '제출하고 닫기');
+    submit.type = 'button';
+    if (readonly) submit.disabled = true;
+    inner.appendChild(submit);
+    bar.appendChild(inner);
+    app.appendChild(bar);
+
+    submit.addEventListener('click', function(){
+      clearTimeout(timer);
+      submit.disabled = true;
+      submit.textContent = '제출 중…';
+      saveLocal();
+      api('POST', '', payload(true)).then(function(r){
+        if (r && r.ok) {
+          try { localStorage.removeItem(LS); } catch(e){}
+          showDone(r.saved || 0, r.skipped || 0);
+        } else if (r && r.code) {
+          showError(r.code);
+        } else {
+          submit.disabled = false; submit.textContent = '제출하고 닫기';
+        }
+      }).catch(function(){
+        submit.disabled = false; submit.textContent = '다시 제출하기 (연결 실패)';
+      });
+    });
+
+    closed = readonly;
+  }
+
+  function showDone(saved, skipped){
+    showMessage('제출 완료', '');
+    var c = el('div', 'card');
+    c.appendChild(el('p', '', '답글 ' + saved + '건을 저장했습니다.' + (skipped > 0 ? ' ' + skipped + '건은 건너뛰었습니다.' : '')));
+    c.appendChild(el('div', 'note',
+      '저장된 답글은 이 시스템이 대신 게시하지 않습니다 — Threads 앱에서 직접 올리신 것이 최종입니다. 다음 배치 알림을 기다려 주세요.'));
+    app.appendChild(c);
+  }
+
+  // ───────────── 시작 ─────────────
+
+  // Threads 앱으로 떠나는 순간이 바로 이 경로다. 없으면 입력이 날아간다.
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'hidden') { saveLocal(); saveRemote(true); }
+  });
+  window.addEventListener('pagehide', function(){ saveLocal(); saveRemote(true); });
+
+  if (!token) { showError('bad_token'); return; }
+  api('GET').then(function(d){
+    if (!d || !d.ok) return showError(d && d.code);
+    render(d);
+  }).catch(function(){ showError('network'); });
+})();
+</script>
+</body>
+</html>
