@@ -283,14 +283,38 @@ button:disabled{opacity:.55;cursor:default}
     it.status = 'copied';
     it.card.classList.add('done');
     it.statusEl.textContent = copied
-      ? '✓ 복사됨 — Threads 앱에서 붙여넣어 게시하세요'
+      ? '✓ 복사됨 — 게시용 계정인지 확인하고 Threads 앱에서 붙여넣으세요'
       : '⚠ 복사 실패 — 답글을 길게 눌러 직접 복사하세요';
     it.statusEl.className = 'status show' + (copied ? '' : ' warn');
     saveLocal();
     saveRemote(false);
 
-    // (3) 이동. 유니버설 링크라 앱이 있으면 앱으로, 없으면 웹으로 열린다.
-    if (copied && url) window.open(url, '_blank', 'noopener,noreferrer');
+    // (3) 이동.
+    if (copied && url) openPost(url);
+  }
+
+  // 원문을 Threads 앱으로 연다.
+  // 안드로이드는 intent 링크로 앱을 직접 지정한다 — window.open 은 앱 대신 브라우저 새 탭으로
+  // 열리는 경우가 많고, 그 브라우저에 다른 계정(예: 스크래핑 계정)이 로그인돼 있으면 그 계정으로
+  // 보인다. 앱이 없으면 browser_fallback_url 로 웹이 열린다.
+  // 그 밖(아이폰 등)은 유니버설 링크 — 앱이 있으면 앱으로, 없으면 웹으로 열린다.
+  var THREADS_ANDROID_PACKAGE = 'com.instagram.barcelona';
+
+  function openPost(url){
+    if (/Android/i.test(navigator.userAgent)) {
+      var u = new URL(url);
+      var intent = 'intent://' + u.host + u.pathname + u.search +
+        '#Intent;scheme=https;package=' + THREADS_ANDROID_PACKAGE +
+        ';S.browser_fallback_url=' + encodeURIComponent(url) + ';end';
+      var a = document.createElement('a');
+      a.href = intent;
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   // ───────────── 화면 ─────────────
