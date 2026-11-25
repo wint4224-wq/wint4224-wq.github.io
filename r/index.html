@@ -62,6 +62,13 @@ h1{font-size:17px;margin:0;font-weight:650}
 .meta{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px}
 .author{font-weight:650;font-size:15px;word-break:break-all}
 .when{color:var(--muted);font-size:13px;white-space:nowrap}
+.when.old{color:var(--warn);font-weight:600}
+.acct{
+  background:var(--chip-bg);color:var(--chip-fg);border-radius:14px;
+  padding:12px 16px;margin-bottom:16px
+}
+.acct-name{font-size:17px;font-weight:700}
+.acct .note{color:inherit;opacity:.85;margin-top:4px}
 blockquote{
   margin:0 0 10px;padding:12px;background:var(--quote);
   border-radius:10px;white-space:pre-wrap;word-break:break-word;font-size:15px
@@ -127,6 +134,8 @@ button:disabled{opacity:.55;cursor:default}
   var token = readToken();
   var LS = 'draft:' + token;
   var items = [];        // [{id, card, ta, status, statusEl}]
+  var account = '';      // 답글을 올릴 게시용 계정 (예: "B 나란히")
+  var whens = [];        // [{span, iso}] — 글 나이를 30초마다 다시 그린다
   var closed = true;     // 제출 완료·오류 화면에서는 자동저장을 멈춘다
   var timer = null;
 
@@ -160,10 +169,23 @@ button:disabled{opacity:.55;cursor:default}
     if (!isFinite(t)) return '';
     var min = Math.max(0, Math.round((Date.now() - t) / 60000));
     if (min < 1) return '방금';
-    if (min < 60) return min + '분 전';
+    // 1시간 언저리는 분 단위가 중요하다 (59분 vs 75분) — 2시간까지는 분으로 보여준다.
+    if (min < 120) return min + '분 전';
     var h = Math.round(min / 60);
     if (h < 24) return h + '시간 전';
     return Math.round(h / 24) + '일 전';
+  }
+
+  // 1시간 이내 글에만 답글을 다는 운영이라, 나이를 계속 갱신하고 1시간을 넘기면 눈에 띄게 한다.
+  function ageMin(iso){
+    var t = new Date(iso).getTime();
+    return isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 60000)) : -1;
+  }
+
+  function paintWhen(w){
+    var m = ageMin(w.iso);
+    w.span.textContent = relTime(w.iso) + (m > 60 ? ' · 1시간 지남' : '');
+    w.span.className = 'when' + (m > 60 ? ' old' : '');
   }
 
   function leftText(exp){
@@ -283,7 +305,7 @@ button:disabled{opacity:.55;cursor:default}
     it.status = 'copied';
     it.card.classList.add('done');
     it.statusEl.textContent = copied
-      ? '✓ 복사됨 — 게시용 계정인지 확인하고 Threads 앱에서 붙여넣으세요'
+      ? '✓ 복사됨 — ' + (account || '게시용') + ' 계정인지 확인하고 Threads 앱에서 붙여넣으세요'
       : '⚠ 복사 실패 — 답글을 길게 눌러 직접 복사하세요';
     it.statusEl.className = 'status show' + (copied ? '' : ' warn');
     saveLocal();
@@ -326,7 +348,10 @@ button:disabled{opacity:.55;cursor:default}
 
     var meta = el('div', 'meta');
     meta.appendChild(el('span', 'author', '@' + (c.author || '')));
-    meta.appendChild(el('span', 'when', relTime(c.posted_at)));
+    var when = { span: el('span', 'when'), iso: c.posted_at };
+    paintWhen(when);
+    whens.push(when);
+    meta.appendChild(when.span);
     card.appendChild(meta);
 
     card.appendChild(el('blockquote', '', c.text || ''));
@@ -381,20 +406,32 @@ button:disabled{opacity:.55;cursor:default}
   function render(d){
     clear(app);
     items = [];
+    whens = [];
     var cands = Array.isArray(d.candidates) ? d.candidates : [];
     var readonly = d.already_submitted === true;
+    account = String(d.profile_label || '');
 
     var hd = el('header');
-    hd.appendChild(el('h1', '', (d.profile_label || '답글') + ' · ' + cands.length + '건'));
+    hd.appendChild(el('h1', '', (account || '답글') + ' · ' + cands.length + '건'));
     var sub = el('div', 'sub');
     hd.appendChild(sub);
     app.appendChild(hd);
 
-    var exp = new Date(d.expires_at).getTime();
-    if (isFinite(exp)) {
-      var tick = function(){ sub.textContent = leftText(exp); };
-      tick(); setInterval(tick, 30000);
+    // 계정이 4개라 엉뚱한 계정으로 올리는 실수가 가장 흔하다 — 맨 위에 크게 적는다.
+    if (account) {
+      var acct = el('div', 'acct');
+      acct.appendChild(el('div', 'acct-name', '✍️ ' + account + ' 계정으로 답글'));
+      acct.appendChild(el('div', 'note',
+        'Threads 앱에서 지금 이 계정인지 먼저 확인하세요. 아래 프로필 아이콘을 길게 누르면 계정을 바꿀 수 있어요.'));
+      app.appendChild(acct);
     }
+
+    var exp = new Date(d.expires_at).getTime();
+    var tick = function(){
+      if (isFinite(exp)) sub.textContent = leftText(exp);
+      whens.forEach(paintWhen);
+    };
+    tick(); setInterval(tick, 30000);
 
     if (readonly) {
       var n = el('div', 'card');
